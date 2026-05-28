@@ -204,11 +204,116 @@ def analyze_file(filepath):
     }
 
 
+def collect_schedule_counts(entries, cat_key):
+    """
+    Aggregate schedule/chunk statistics for a list of (first_level_dir, file_stats) entries.
+    Returns a dict of counts.
+    """
+    schedule_counts: dict[str, int] = defaultdict(int)
+    schedule_chunk_counts: dict[tuple, int] = defaultdict(int)
+    sig_base_default_counts: dict[str, int] = defaultdict(int)
+    sig_best_default_counts: dict[str, int] = defaultdict(int)
+    chunk1_count = 0
+    chunk_gt1_count = 0
+    static1_count = 0
+    total = 0
+
+    for _, file_stats in entries:
+        stats = file_stats.get(cat_key)
+        if stats is None:
+            continue
+        total += 1
+        kind = stats['schedule_kind']
+        chunk = stats['chunk_size']
+        schedule_counts[kind] += 1
+        schedule_chunk_counts[(kind, chunk)] += 1
+        if stats['significant_base_default']:
+            sig_base_default_counts[kind] += 1
+        if stats['significant_best_default']:
+            sig_best_default_counts[kind] += 1
+        if stats['is_static1']:
+            static1_count += 1
+        try:
+            cs = int(chunk)
+            if cs == 1:
+                chunk1_count += 1
+            elif cs > 1:
+                chunk_gt1_count += 1
+        except ValueError:
+            pass
+
+    return dict(
+        schedule_counts=schedule_counts,
+        schedule_chunk_counts=schedule_chunk_counts,
+        sig_base_default_counts=sig_base_default_counts,
+        sig_best_default_counts=sig_best_default_counts,
+        chunk1_count=chunk1_count,
+        chunk_gt1_count=chunk_gt1_count,
+        static1_count=static1_count,
+        total=total,
+    )
+
+
+def print_schedule_breakdown(counts, indent="  ", show_sig=False):
+    """Print (1) schedule+chunk pairs, (2) schedule totals, (3) chunk-size-1 vs >1."""
+    total = counts['total']
+    print(f"{indent}Total CSVs with data: {total}")
+
+    if total == 0:
+        return
+
+    print(f"\n{indent}Times each schedule+chunk pair is optimal:")
+    for (kind, chunk), count in sorted(counts['schedule_chunk_counts'].items(), key=lambda x: -x[1]):
+        pair = f"{kind},{chunk}"
+        print(f"{indent}  {pair:<26s}: {count}")
+
+    print(f"\n{indent}Times each scheduling kind is optimal:")
+    for kind, count in sorted(counts['schedule_counts'].items(), key=lambda x: -x[1]):
+        print(f"{indent}  {kind:<20s}: {count}")
+
+    print(f"\n{indent}Chunk size == 1 chosen: {counts['chunk1_count']} / {total}")
+    print(f"{indent}Chunk size  > 1 chosen: {counts['chunk_gt1_count']} / {total}")
+
+    if show_sig:
+        print(
+            f"\n{indent}Times a scheduling kind is optimal with significant speedup"
+            f" (>= {SIGNIFICANT_SPEEDUP_THRESHOLD}x) vs optimal base with default scheduling:"
+        )
+        if counts['sig_base_default_counts']:
+            for kind, count in sorted(counts['sig_base_default_counts'].items(), key=lambda x: -x[1]):
+                print(f"{indent}  {kind:<20s}: {count}")
+        else:
+            print(f"{indent}  (none)")
+
+        print(
+            f"\n{indent}Times a scheduling kind is optimal with significant speedup"
+            f" (>= {SIGNIFICANT_SPEEDUP_THRESHOLD}x) vs best algorithm with default scheduling:"
+        )
+        if counts['sig_best_default_counts']:
+            for kind, count in sorted(counts['sig_best_default_counts'].items(), key=lambda x: -x[1]):
+                print(f"{indent}  {kind:<20s}: {count}")
+        else:
+            print(f"{indent}  (none)")
+
+        print(
+            f"\n{indent}Times a base-algorithm restricted to static,1 is optimal:"
+            f" {counts['static1_count']} / {total}"
+        )
+
+
 def print_summary(all_file_stats):
-    """Print the overall summary report across all processed CSV files."""
+    """Print the overall summary report across all processed CSV files.
+
+    all_file_stats: list of (first_level_dir, file_stats_dict)
+    """
     print(f"\n{'='*80}")
     print("OVERALL SUMMARY REPORT")
     print(f"{'='*80}")
+
+    by_dir: dict[str, list] = defaultdict(list)
+    for entry in all_file_stats:
+        first_level, _ = entry
+        by_dir[first_level].append(entry)
 
     categories = [
         ('unrestricted', 'All Schedules (Unrestricted)'),
@@ -219,49 +324,14 @@ def print_summary(all_file_stats):
     for cat_key, cat_label in categories:
         print(f"\n--- {cat_label} ---")
 
-        schedule_counts: dict[str, int] = defaultdict(int)
-        sig_base_default_counts: dict[str, int] = defaultdict(int)
-        sig_best_default_counts: dict[str, int] = defaultdict(int)
-        static1_count = 0
-        total = 0
+        for dir_name in sorted(by_dir):
+            print(f"\n  [Directory: {dir_name}]")
+            counts = collect_schedule_counts(by_dir[dir_name], cat_key)
+            print_schedule_breakdown(counts, indent="    ")
 
-        for file_stats in all_file_stats:
-            stats = file_stats.get(cat_key)
-            if stats is None:
-                continue
-            total += 1
-            kind = stats['schedule_kind']
-            schedule_counts[kind] += 1
-            if stats['significant_base_default']:
-                sig_base_default_counts[kind] += 1
-            if stats['significant_best_default']:
-                sig_best_default_counts[kind] += 1
-            if stats['is_static1']:
-                static1_count += 1
-
-        print(f"  Total CSVs with data: {total}")
-
-        print(f"\n  Times each scheduling kind is optimal:")
-        for kind, count in sorted(schedule_counts.items(), key=lambda x: -x[1]):
-            print(f"    {kind:20s}: {count}")
-
-        print(f"\n  Times a scheduling kind is optimal with significant speedup (>= {SIGNIFICANT_SPEEDUP_THRESHOLD}x)"
-              f" vs optimal base with default scheduling:")
-        if sig_base_default_counts:
-            for kind, count in sorted(sig_base_default_counts.items(), key=lambda x: -x[1]):
-                print(f"    {kind:20s}: {count}")
-        else:
-            print("    (none)")
-
-        print(f"\n  Times a scheduling kind is optimal with significant speedup (>= {SIGNIFICANT_SPEEDUP_THRESHOLD}x)"
-              f" vs best algorithm with default scheduling:")
-        if sig_best_default_counts:
-            for kind, count in sorted(sig_best_default_counts.items(), key=lambda x: -x[1]):
-                print(f"    {kind:20s}: {count}")
-        else:
-            print("    (none)")
-
-        print(f"\n  Times a base-algorithm restricted to static,1 is optimal: {static1_count} / {total}")
+        print(f"\n  [Overall Total]")
+        counts = collect_schedule_counts(all_file_stats, cat_key)
+        print_schedule_breakdown(counts, indent="    ", show_sig=True)
 
 
 def main():
@@ -269,14 +339,14 @@ def main():
         print("Usage: python processData.py <base_directory>")
         sys.exit(1)
 
-    base_dir = sys.argv[1]
+    base_dir = Path(sys.argv[1]).resolve()
 
-    if not os.path.isdir(base_dir):
+    if not base_dir.is_dir():
         print(f"Error: {base_dir} is not a valid directory")
         sys.exit(1)
 
     print(f"Searching for CSV files in: {base_dir}")
-    csv_files = find_csv_files(base_dir)
+    csv_files = find_csv_files(str(base_dir))
 
     if not csv_files:
         print("No matching CSV files found.")
@@ -284,12 +354,14 @@ def main():
 
     print(f"Found {len(csv_files)} CSV file(s)")
 
-    all_file_stats = []
+    all_file_stats = []  # list of (first_level_dir, stats_dict)
     for csv_file in sorted(csv_files):
+        rel = Path(csv_file).resolve().relative_to(base_dir)
+        first_level = rel.parts[0] if len(rel.parts) > 1 else "."
         try:
             stats = analyze_file(csv_file)
             if stats is not None:
-                all_file_stats.append(stats)
+                all_file_stats.append((first_level, stats))
         except Exception as e:
             print(f"\n{'='*80}")
             print(f"ERROR processing file: {csv_file}")
