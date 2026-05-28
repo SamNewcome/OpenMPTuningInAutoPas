@@ -51,7 +51,7 @@ def last_data_row(filepath: Path) -> tuple[dict, str] | tuple[None, None]:
 
 
 def best_chunk1_performance(tuning_data_file: Path) -> float | None:
-    """Return the minimum Smoothed value among rows with OpenMPChunkSize == '1'."""
+    """Return the minimum reduced value among rows with OpenMPChunkSize == '1'."""
     best: float | None = None
     with tuning_data_file.open(newline="") as fh:
         reader = csv.DictReader(fh)
@@ -59,7 +59,7 @@ def best_chunk1_performance(tuning_data_file: Path) -> float | None:
             if row.get("OpenMPChunkSize", "").strip() != "1":
                 continue
             try:
-                val = float(row["Smoothed"])
+                val = float(row["Reduced"])
             except (KeyError, ValueError):
                 continue
             if best is None or val < best:
@@ -160,7 +160,7 @@ def main() -> None:
                 c1 = r["chunk1_speedup"]
                 verdict = "outperforms" if c1 < 1.0 else "does not outperform"
                 print(
-                    f"  Best chunk-size-1 entry (Smoothed / dir2 optimum):"
+                    f"  Best chunk-size-1 entry (Reduced / dir2 optimum):"
                     f" {c1:.4f}x  [{verdict} dir2]"
                 )
             else:
@@ -176,7 +176,7 @@ def main() -> None:
         if c1_speedups:
             print()
             print_stats(
-                "Chunk-size-1 Best Speedup Statistics (best Smoothed / dir2 optimum)",
+                "Chunk-size-1 Best Speedup Statistics (best Reduced / dir2 optimum)",
                 c1_speedups,
             )
 
